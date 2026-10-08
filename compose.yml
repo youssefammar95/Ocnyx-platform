@@ -1,0 +1,30 @@
+services:
+  emqx:
+    image: emqx/emqx:5.8.6
+    ports:
+      - "1883:1883"
+      - "18083:18083"
+    healthcheck:
+      test: ["CMD", "emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  api:
+    build:
+      context: ../Ocnyx
+      dockerfile: ../Ocnyx-platform/docker/Dockerfile
+      args:
+        VITE_SUPABASE_URL: $VITE_SUPABASE_URL
+        VITE_SUPABASE_ANON_KEY: $VITE_SUPABASE_ANON_KEY
+    env_file:
+      - .env
+    environment:
+       MQTT_ENABLED: "true"
+       MQTT_BROKER: "emqx"
+       MQTT_PORT: "1883"
+       OCNYX_DEPLOYMENT: "staging"
+    ports:
+      - "8000:8000"
+    depends_on:
+      emqx:
+        condition: service_healthy
