@@ -22,9 +22,34 @@ services:
        MQTT_ENABLED: "true"
        MQTT_BROKER: "emqx"
        MQTT_PORT: "1883"
+       MQTT_REQUIRE_BROKER_AUTH: "true"
        OCNYX_DEPLOYMENT: "staging"
     ports:
       - "8000:8000"
     depends_on:
       emqx:
+        condition: service_healthy
+  simulator:
+    image: python:3.11-slim
+    volumes:
+      - ../Ocnyx/tools/ocnyx_sim:/sim:ro
+      - ../Ocnyx/tests/prediction_validation/fixtures/training-industrial-pump.csv:/data/training.csv:ro
+    working_dir: /sim
+    environment:
+      OCNYX_BASE_URL: "http://api:8000"
+      OCNYX_API_KEY: ${OCNYX_API_KEY}
+      OCNYX_MACHINE_ID: "sim-pump-01"
+    command:
+      - sh 
+      - -c
+      - > 
+        pip install --quiet requests paho-mqtt python-dotenv &&
+        python live_simulator.py
+        --config scenarios/6d-prediction-eval.json
+        --baseline-csv /data/training.csv
+        --transport mqtt
+        --state-file /tmp/state.json
+        --scorecard-file /tmp/scorecard.json
+    depends_on:
+      api:
         condition: service_healthy

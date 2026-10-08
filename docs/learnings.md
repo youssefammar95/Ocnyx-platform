@@ -51,3 +51,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)" || exit 1
 ```
 **Result:** `docker ps` shows `(health: starting)`, then `(healthy)` after about 10 s.
+
+### Containers find each other by service name, not `localhost`
+**Problem:** Inside a container, `localhost` is the container itself, not the host and not other containers.
+**Fix:** Compose puts all services into one network where each service is reachable by its name: `MQTT_BROKER=emqx`, `OCNYX_BASE_URL=http://api:8000`.
+**Ports:** In `"8000:8000"` the left side is the host port (for my browser), the right side is the container port. Containers talk to each other on the container port; `ports:` is only needed for access from outside.
