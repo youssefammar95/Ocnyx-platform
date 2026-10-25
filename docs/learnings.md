@@ -57,3 +57,25 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 **Fix:** Compose puts all services into one network where each service is reachable by its name: `MQTT_BROKER=emqx`, `OCNYX_BASE_URL=http://api:8000`.
 **Ports:** In `"8000:8000"` the left side is the host port (for my browser), the right side is the container port. Containers talk to each other on the container port; `ports:` is only needed for access from outside.
 
+
+### Two processes with the same MQTT client ID kick each other out
+**Observation:** With `api` and `worker` both running, the logs alternated every second: one container logged `[MQTT] Connected`, the other `[MQTT] Disconnected (rc=7) — client will retry`, then the other way round.
+**Why:** The app uses a fixed `client_id` from its settings. An MQTT broker allows only one session per client ID, so every new connection takes over the session and disconnects the previous one. Both containers also ran all background schedulers, so every job ran twice (duplicate Supabase RPCs in both logs).
+**Root cause:** `OCNYX_ROLE` was set in `compose.yml`, but the image was built from a local `../Ocnyx` checkout (`fix/npm-audit`) that did not contain the role code yet. The merge to `main` had happened on GitHub only. Unknown env vars are simply ignored, so both containers behaved like the old single process.
+**Fix:** `git switch main && git pull` in `../Ocnyx`, then `docker compose up --build`. Docker builds from what is on disk, not from GitHub.
+**Result:**
+
+| | before | after |
+|---|---|---|
+| api log | MQTT connect/disconnect loop | `role=api` — `MQTT and background schedulers disabled` |
+| worker log | MQTT connect/disconnect loop | `role=worker`, one stable MQTT connection |
+| `rc=7` disconnects | every second | 0 |
+| Schedulers | in both containers | worker only |
+
+### Scaling the API needs a load balancer in front
+**Problem:** `docker compose up --scale api=2` fails while `api` publishes `"8000:8000"`: two containers cannot bind the same host port.
+**Fix:** An `nginx` service (`proxy`) owns host port 8000 and forwards to `api:8000`. The `api` service no longer publishes a port. nginx resolves `api` through Docker's DNS (`resolver 127.0.0.11`), which returns one IP per replica; using a variable in `proxy_pass` makes nginx re-resolve at runtime, so replicas added later are picked up. `/ws` gets `Upgrade`/`Connection` headers so websockets pass through.
+**Result:**
+- 10 requests to `localhost:8000/api/health` → all `200`, served by both replicas (7 / 3).
+- `/ws` through the proxy answers `101 Switching Protocols`.
+- `redis-cli PUBSUB NUMSUB ocnyx:ws:customer` → `2`: both API replicas receive the worker's websocket broadcasts, so a browser gets live updates no matter which replica it is connected to.
