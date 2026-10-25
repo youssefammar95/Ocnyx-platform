@@ -1,3 +1,27 @@
+x-ocnyx-env: &ocnyx-env
+  MQTT_ENABLED: "true"
+  MQTT_BROKER: "emqx"
+  MQTT_PORT: "1883"
+  MQTT_REQUIRE_BROKER_AUTH: "true"
+  OCNYX_DEPLOYMENT: "staging"
+  REDIS_URL: "redis://redis:6379/0"
+
+x-ocnyx-app: &ocnyx-app
+  image: ocnyx-app:local
+  build:
+    context: ../Ocnyx
+    dockerfile: ../Ocnyx-platform/docker/Dockerfile
+    args:
+      VITE_SUPABASE_URL: $VITE_SUPABASE_URL
+      VITE_SUPABASE_ANON_KEY: $VITE_SUPABASE_ANON_KEY
+  env_file:
+    - .env
+  depends_on:
+    emqx:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
 services:
   emqx:
     image: emqx/emqx:5.8.6
@@ -17,28 +41,17 @@ services:
       timeout: 5s
       retries: 5
   api:
-    build:
-      context: ../Ocnyx
-      dockerfile: ../Ocnyx-platform/docker/Dockerfile
-      args:
-        VITE_SUPABASE_URL: $VITE_SUPABASE_URL
-        VITE_SUPABASE_ANON_KEY: $VITE_SUPABASE_ANON_KEY
-    env_file:
-      - .env
+    <<: *ocnyx-app
     environment:
-       MQTT_ENABLED: "true"
-       MQTT_BROKER: "emqx"
-       MQTT_PORT: "1883"
-       MQTT_REQUIRE_BROKER_AUTH: "true"
-       OCNYX_DEPLOYMENT: "staging"
-       REDIS_URL: "redis://redis:6379/0"
+      <<: *ocnyx-env
+      OCNYX_ROLE: "api"
     ports:
       - "8000:8000"
-    depends_on:
-      emqx:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+  worker:
+    <<: *ocnyx-app
+    environment:
+      <<: *ocnyx-env
+      OCNYX_ROLE: "worker"
   simulator:
     image: python:3.11-slim
     volumes:
@@ -62,4 +75,6 @@ services:
         --scorecard-file /tmp/scorecard.json
     depends_on:
       api:
+        condition: service_healthy
+      worker:
         condition: service_healthy
